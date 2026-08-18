@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zova CRM — Client Manager</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+const CLOUD_API = "https://zova-api.vercel.app/api/leads";
+const STORAGE_KEY = "zova_crm_v1";
+
+const SERVICE_TYPES = ["Website","Monthly Retainer","Social Media Management","Google Business Setup","AI Phone Assistant","AI Chatbot","Review Automation","Loyalty App","SEO","Other"];
+const CLIENT_STATUSES = ["Active","Prospect","Paused","Churned"];
+const TASK_TYPES = ["Post content","Update website","Send invoice","Follow up","Monthly report","Check analytics","Renew domain","Other"];
+
+async function cloudSave(clients) {
+  try {
+    await fetch(CLOUD_API, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leads: clients, history: [] })
+    });
+  } catch(e) {}
+}
+
+async function cloudLoad() {
+  try {
+    const r = await fetch(CLOUD_API);
+    const d = await r.json();
+    if (d.leads && d.leads.length > 0 && d.leads[0].businessName !== undefined) return d.leads;
+    return [];
+  } catch { return []; }
+}
+
+function useClients() {
+  const [clients, setClients] = useState([]);
+  useEffect(() => {
+    try { const l = localStorage.getItem(STORAGE_KEY); if (l) setClients(JSON.parse(l)); } catch {}
+    cloudLoad().then(data => {
+      if (data.length > 0) { setClients(data); try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {} }
+    });
+  }, []);
+  const save = (nc) => {
+    setClients(nc);
+    cloudSave(nc);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(nc)); } catch {}
+  };
+  return { clients, save };
+}
+
+function newClient() {
+  return {
+    id: Date.now() + "_" + Math.random().toString(36).slice(2),
+    businessName: "", ownerName: "", phone: "", email: "",
+    address: "", industry: "", status: "Prospect",
+    websiteUrl: "", instagramHandle: "", facebookUrl: "",
+    services: [], oneTimeFee: "", oneTimePaid: false,
+    monthlyFee: "", paymentDueDay: "1", contractStart: "",
+    notes: "", tasks: [], invoices: [],
+    addedAt: new Date().toISOString(),
+  };
+}
+
+function ClientModal({ client, onClose, onSave }) {
+  const [c, setC] = useState({ ...client });
+  const [tab, setTab] = useState("info");
+  const [newTaskType, setNewTaskType] = useState("Post content");
+  const up = (f, v) => setC(p => ({ ...p, [f]: v }));
+  const toggleSvc = (s) => up("services", c.services.includes(s) ? c.services.filter(x => x !== s) : [...c.services, s]);
+  const addTask = () => setC(p => ({ ...p, tasks: [...(p.tasks||[]), { id: Date.now()+"_t", type: newTaskType, description: "", dueDate: "", done: false }] }));
+  const upTask = (id, f, v) => setC(p => ({ ...p, tasks: p.tasks.map(t => t.id === id ? {...t,[f]:v} : t) }));
+  const rmTask = (id) => setC(p => ({ ...p, tasks: p.tasks.filter(t => t.id !== id) }));
+  const addInv = () => setC(p => ({ ...p, invoices: [...(p.invoices||[]), { id: Date.now()+"_i", amount: c.monthlyFee||"", description: "", date: new Date().toISOString().slice(0,10), paid: false, paidDate: "" }] }));
+  const upInv = (id, f, v) => setC(p => ({ ...p, invoices: p.invoices.map(i => i.id === id ? {...i,[f]:v} : i) }));
+  const rmInv = (id) => setC(p => ({ ...p, invoices: p.invoices.filter(i => i.id !== id) }));
+  const totalPaid = (c.invoices||[]).filter(i=>i.paid).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const totalOwed = (c.invoices||[]).filter(i=>!i.paid).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50">
+      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[93vh] flex flex-col">
+        <div className="p-4 border-b border-gray-100 flex items-start justify-between flex-shrink-0">
+          <div>
+            <h2 className="font-black text-lg">{c.businessName||"New Client"}</h2>
+            <p className="text-xs text-gray-400">{c.ownerName||"No owner yet"} {c.industry ? "· "+c.industry : ""}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={"text-xs font-semibold px-2 py-0.5 rounded-full "+(c.status==="Active"?"bg-green-100 text-green-700":c.status==="Prospect"?"bg-blue-100 text-blue-700":c.status==="Paused"?"bg-yellow-100 text-yellow-700":"bg-red-100 text-red-700")}>{c.status}</span>
+            <button onClick={onClose} className="text-gray-400 text-2xl ml-1">×</button>
+          </div>
+        </div>
+        <div className="flex border-b border-gray-100 overflow-x-auto flex-shrink-0">
+          {["info","services","invoices","tasks","notes"].map(t=>(
+            <button key={t} onClick={()=>setTab(t)} className={"px-4 py-3 text-xs font-semibold capitalize whitespace-nowrap "+(tab===t?"border-b-2 border-black text-black":"text-gray-400")}>{t}</button>
+          ))}
+        </div>
+        <div className="overflow-y-auto flex-1 p-4 space-y-3">
+          {tab==="info"&&<div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Business Name *</label><input value={c.businessName} onChange={e=>up("businessName",e.target.value)} placeholder="Aaron's Barbershop" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Owner Name</label><input value={c.ownerName} onChange={e=>up("ownerName",e.target.value)} placeholder="Aaron" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Phone</label><input value={c.phone} onChange={e=>up("phone",e.target.value)} placeholder="718-555-0000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Email</label><input value={c.email} onChange={e=>up("email",e.target.value)} placeholder="owner@business.com" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div className="col-span-2"><label className="text-xs font-semibold text-gray-500 block mb-1">Address</label><input value={c.address} onChange={e=>up("address",e.target.value)} placeholder="70-18 Main St, Flushing NY" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Industry</label><input value={c.industry} onChange={e=>up("industry",e.target.value)} placeholder="Barbershop" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Status</label>
+                <select value={c.status} onChange={e=>up("status",e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                  {CLIENT_STATUSES.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2"><label className="text-xs font-semibold text-gray-500 block mb-1">Website URL</label><input value={c.websiteUrl} onChange={e=>up("websiteUrl",e.target.value)} placeholder="https://..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Instagram</label><input value={c.instagramHandle} onChange={e=>up("instagramHandle",e.target.value)} placeholder="@handle" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Facebook</label><input value={c.facebookUrl} onChange={e=>up("facebookUrl",e.target.value)} placeholder="facebook.com/..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Contract Start</label><input type="date" value={c.contractStart} onChange={e=>up("contractStart",e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+            </div>
+            {c.websiteUrl&&<a href={c.websiteUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline">View website →</a>}
+          </div>}
+
+          {tab==="services"&&<div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold text-gray-500 mb-2">Services you provide</div>
+              <div className="flex flex-wrap gap-2">
+                {SERVICE_TYPES.map(s=>(
+                  <button key={s} onClick={()=>toggleSvc(s)} className={"text-xs px-3 py-1.5 rounded-full border font-semibold "+(c.services.includes(s)?"bg-black text-white border-black":"border-gray-200 text-gray-600")}>{s}</button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">One-Time Fee ($)</label><input type="number" value={c.oneTimeFee} onChange={e=>up("oneTimeFee",e.target.value)} placeholder="1000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Monthly Fee ($)</label><input type="number" value={c.monthlyFee} onChange={e=>up("monthlyFee",e.target.value)} placeholder="150" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">One-Time Paid?</label>
+                <button onClick={()=>up("oneTimePaid",!c.oneTimePaid)} className={"text-xs px-4 py-2 rounded-lg font-semibold border mt-1 "+(c.oneTimePaid?"bg-green-500 text-white border-green-500":"border-gray-200 text-gray-600")}>
+                  {c.oneTimePaid?"✓ Paid":"Not yet"}
+                </button>
+              </div>
+              <div><label className="text-xs font-semibold text-gray-500 block mb-1">Payment Due Day</label><input type="number" min="1" max="31" value={c.paymentDueDay} onChange={e=>up("paymentDueDay",e.target.value)} placeholder="1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"/></div>
+            </div>
+            {c.services.length>0&&<div className="bg-gray-50 rounded-xl p-3">
+              <div className="text-xs font-semibold text-gray-400 mb-2">Summary</div>
+              {c.services.map(s=><div key={s} className="text-sm text-gray-700 py-0.5">✓ {s}</div>)}
+              {c.monthlyFee&&<div className="text-sm font-bold text-green-600 mt-2">${c.monthlyFee}/month recurring</div>}
+              {c.oneTimeFee&&<div className="text-sm font-bold text-gray-800">${c.oneTimeFee} one-time {c.oneTimePaid?"✓ paid":"⏳ pending"}</div>}
+            </div>}
+          </div>}
+
+          {tab==="invoices"&&<div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-green-50 border border-green-100 rounded-xl p-3"><div className="text-xs text-gray-400 mb-0.5">Collected</div><div className="text-xl font-black text-green-600">${totalPaid.toLocaleString()}</div></div>
+              <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-3"><div className="text-xs text-gray-400 mb-0.5">Outstanding</div><div className="text-xl font-black text-yellow-600">${totalOwed.toLocaleString()}</div></div>
+            </div>
+            <button onClick={addInv} className="w-full border border-dashed border-gray-200 hover:bg-gray-50 py-2.5 rounded-xl text-sm text-gray-500">+ Add Invoice</button>
+            {(c.invoices||[]).map(inv=>(
+              <div key={inv.id} className={"border rounded-xl p-3 "+(inv.paid?"border-green-100 bg-green-50":"border-gray-100")}>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-xs text-gray-400">Amount ($)</label><input type="number" value={inv.amount} onChange={e=>upInv(inv.id,"amount",e.target.value)} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-sm mt-0.5"/></div>
+                      <div><label className="text-xs text-gray-400">Date</label><input type="date" value={inv.date} onChange={e=>upInv(inv.id,"date",e.target.value)} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-sm mt-0.5"/></div>
+                    </div>
+                    <input value={inv.description} onChange={e=>upInv(inv.id,"description",e.target.value)} placeholder="e.g. Monthly retainer — August" className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"/>
+                    <div className="flex items-center gap-2">
+                      <button onClick={()=>upInv(inv.id,"paid",!inv.paid)} className={"text-xs px-3 py-1.5 rounded-lg font-semibold "+(inv.paid?"bg-green-500 text-white":"bg-gray-100 text-gray-600")}>
+                        {inv.paid?"✓ Paid":"Mark Paid"}
+                      </button>
+                      {inv.paid&&<input type="date" value={inv.paidDate} onChange={e=>upInv(inv.id,"paidDate",e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-xs"/>}
+                    </div>
+                  </div>
+                  <button onClick={()=>rmInv(inv.id)} className="text-red-300 hover:text-red-500 text-lg flex-shrink-0">×</button>
+                </div>
+              </div>
+            ))}
+          </div>}
+
+          {tab==="tasks"&&<div className="space-y-3">
+            <div className="flex gap-2">
+              <select value={newTaskType} onChange={e=>setNewTaskType(e.target.value)} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                {TASK_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
+              <button onClick={addTask} className="bg-black text-white px-4 py-2 rounded-lg text-sm font-semibold">+ Add</button>
+            </div>
+            {(c.tasks||[]).length===0&&<div className="text-xs text-gray-400 text-center py-4">No tasks yet.</div>}
+            {(c.tasks||[]).map(t=>(
+              <div key={t.id} className={"border rounded-xl p-3 "+(t.done?"border-gray-100 bg-gray-50 opacity-60":"border-gray-100")}>
+                <div className="flex items-start gap-2">
+                  <input type="checkbox" checked={t.done} onChange={e=>upTask(t.id,"done",e.target.checked)} className="mt-1 w-4 h-4 flex-shrink-0"/>
+                  <div className="flex-1 space-y-1">
+                    <span className={"text-sm font-semibold "+(t.done?"line-through text-gray-400":"")}>{t.type}</span>
+                    <input value={t.description} onChange={e=>upTask(t.id,"description",e.target.value)} placeholder="Details..." className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"/>
+                    <input type="date" value={t.dueDate} onChange={e=>upTask(t.id,"dueDate",e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-xs"/>
+                  </div>
+                  <button onClick={()=>rmTask(t.id)} className="text-red-300 hover:text-red-500 text-lg flex-shrink-0">×</button>
+                </div>
+              </div>
+            ))}
+          </div>}
+
+          {tab==="notes"&&<textarea value={c.notes} onChange={e=>up("notes",e.target.value)} placeholder="Notes about this client..." className="w-full border border-gray-200 rounded-xl p-3 text-sm h-64 resize-none"/>}
+        </div>
+
+        <div className="p-4 border-t border-gray-100 flex gap-2 flex-shrink-0">
+          <button onClick={()=>onSave(c)} className="flex-1 bg-black text-white py-2.5 rounded-xl font-bold text-sm">Save Client</button>
+          <button onClick={onClose} className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const { clients, save } = useClients();
+  const [tab, setTab] = useState("dashboard");
+  const [selected, setSelected] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  const today = new Date().toISOString().slice(0,10);
+
+  const stats = useMemo(() => {
+    const active = clients.filter(c=>c.status==="Active");
+    const mrr = active.reduce((s,c)=>s+(parseFloat(c.monthlyFee)||0),0);
+    const collected = clients.reduce((s,c)=>s+(c.invoices||[]).filter(i=>i.paid).reduce((ss,i)=>ss+(parseFloat(i.amount)||0),0),0);
+    const outstanding = clients.reduce((s,c)=>s+(c.invoices||[]).filter(i=>!i.paid).reduce((ss,i)=>ss+(parseFloat(i.amount)||0),0),0);
+    const tasksDue = clients.reduce((s,c)=>s+(c.tasks||[]).filter(t=>!t.done&&t.dueDate&&t.dueDate<=today).length,0);
+
+    // Monthly revenue chart — last 6 months
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const key = d.toISOString().slice(0,7);
+      const label = d.toLocaleDateString("en-US", { month:"short" });
+      const amount = clients.reduce((s,c) => s + (c.invoices||[]).filter(inv => inv.paid && inv.paidDate && inv.paidDate.startsWith(key)).reduce((ss,inv) => ss+(parseFloat(inv.amount)||0),0),0);
+      months.push({ key, label, amount });
+    }
+
+    // Payment reminders — due in next 7 days
+    const soon = [];
+    const nowDay = new Date().getDate();
+    clients.filter(c=>c.status==="Active"&&c.monthlyFee&&c.paymentDueDay).forEach(c => {
+      const dueDay = parseInt(c.paymentDueDay);
+      const diff = dueDay - nowDay;
+      if (diff >= 0 && diff <= 7) {
+        soon.push({ businessName: c.businessName, ownerName: c.ownerName, amount: c.monthlyFee, dueDay, diff, id: c.id });
+      }
+    });
+
+    return { active:active.length, mrr, collected, outstanding, tasksDue, total:clients.length, months, soon };
+  }, [clients, today]);
+
+  const filtered = clients.filter(c=>{
+    const mf = filter==="All"||c.status===filter;
+    const ms = !search||c.businessName.toLowerCase().includes(search.toLowerCase())||c.ownerName.toLowerCase().includes(search.toLowerCase());
+    return mf&&ms;
+  });
+
+  const allTasksDue = clients.flatMap(c=>(c.tasks||[]).filter(t=>!t.done&&t.dueDate&&t.dueDate<=today).map(t=>({...t,clientName:c.businessName,clientId:c.id})));
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(clients,null,2)],{type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href=url;a.download="zova-clients-"+new Date().toISOString().slice(0,10)+".json";a.click();
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-100 px-4 py-3 sticky top-0 z-40 flex items-center justify-between">
+        <div><div className="font-black text-lg tracking-tight">Zova CRM</div><div className="text-xs text-gray-400">Client Manager</div></div>
+        <div className="flex gap-2">
+          <button onClick={exportData} className="text-xs border border-gray-200 px-3 py-1.5 rounded-lg text-gray-600">Export</button>
+          <label className="text-xs border border-gray-200 px-3 py-1.5 rounded-lg text-gray-600 cursor-pointer">
+            Import<input type="file" accept=".json" className="hidden" onChange={e=>{
+              if(!e.target.files[0]) return;
+              const reader = new FileReader();
+              reader.onload = ev => {
+                try {
+                  const imported = JSON.parse(ev.target.result);
+                  const existingIds = new Set(clients.map(c=>c.id));
+                  const fresh = imported.filter(c=>!existingIds.has(c.id));
+                  save([...fresh,...clients]);
+                  alert("Imported "+fresh.length+" clients.");
+                } catch { alert("Invalid file."); }
+              };
+              reader.readAsText(e.target.files[0]);
+            }}/>
+          </label>
+          <button onClick={()=>setShowNew(true)} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg font-semibold">+ Client</button>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-3">
+
+        {tab==="dashboard"&&<div className="space-y-4">
+          <div><h1 className="text-2xl font-black">Dashboard</h1><p className="text-sm text-gray-400">{new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</p></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white border border-green-100 rounded-2xl p-4"><div className="text-2xl font-black">{stats.active}</div><div className="text-xs text-gray-500 mt-0.5">Active Clients</div></div>
+            <div className="bg-white border border-blue-100 rounded-2xl p-4"><div className="text-2xl font-black">${stats.mrr.toLocaleString()}</div><div className="text-xs text-gray-500 mt-0.5">Monthly Recurring Revenue</div></div>
+            <div className="bg-white border border-emerald-100 rounded-2xl p-4"><div className="text-2xl font-black">${stats.collected.toLocaleString()}</div><div className="text-xs text-gray-500 mt-0.5">Total Collected</div></div>
+            <div className={"bg-white rounded-2xl p-4 border "+(stats.outstanding>0?"border-yellow-200":"border-gray-100")}><div className="text-2xl font-black">${stats.outstanding.toLocaleString()}</div><div className="text-xs text-gray-500 mt-0.5">Outstanding</div></div>
+            <div className={"bg-white rounded-2xl p-4 border "+(stats.tasksDue>0?"border-red-200":"border-gray-100")}><div className="text-2xl font-black">{stats.tasksDue}</div><div className="text-xs text-gray-500 mt-0.5">Tasks Due Today</div></div>
+            <div className="bg-white border border-gray-100 rounded-2xl p-4"><div className="text-2xl font-black">{stats.total}</div><div className="text-xs text-gray-500 mt-0.5">Total Clients</div></div>
+          </div>
+          {/* Revenue Chart */}
+          {stats.months.some(m=>m.amount>0)&&<div className="bg-white border border-gray-100 rounded-2xl p-4">
+            <div className="font-black text-sm mb-3">Revenue — Last 6 Months</div>
+            <div className="flex items-end gap-2 h-24">
+              {stats.months.map(m=>{
+                const max = Math.max(...stats.months.map(x=>x.amount),1);
+                const h = Math.max((m.amount/max)*100,m.amount>0?8:2);
+                return <div key={m.key} className="flex-1 flex flex-col items-center gap-1">
+                  <div className="text-[9px] text-gray-400">{m.amount>0?"$"+m.amount:""}</div>
+                  <div className="w-full rounded-t-md transition-all" style={{height:h+"%",background:m.amount>0?"#0a0a0a":"#f3f4f6",minHeight:"4px"}}></div>
+                  <div className="text-[9px] text-gray-400">{m.label}</div>
+                </div>;
+              })}
+            </div>
+          </div>}
+
+          {/* Payment reminders */}
+          {stats.soon.length>0&&<div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+            <div className="font-black text-sm mb-2 text-blue-700">Payments Due Soon</div>
+            {stats.soon.map(p=>(
+              <div key={p.id} onClick={()=>setSelected(clients.find(c=>c.id===p.id))} className="flex items-center justify-between py-1.5 border-b border-blue-100 last:border-0 cursor-pointer">
+                <div>
+                  <span className="text-sm font-semibold">{p.businessName}</span>
+                  <span className="text-xs text-blue-500 ml-2">{p.diff===0?"Due today":"Due in "+p.diff+" day"+(p.diff>1?"s":"")}</span>
+                </div>
+                <span className="text-sm font-bold text-blue-700">${p.amount}</span>
+              </div>
+            ))}
+          </div>}
+
+          {allTasksDue.length>0&&<div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+            <div className="font-black text-sm mb-2 text-red-700">Tasks Due Today</div>
+            {allTasksDue.map(t=><div key={t.id} onClick={()=>setSelected(clients.find(c=>c.id===t.clientId))} className="flex items-center gap-2 py-1.5 border-b border-red-100 last:border-0 cursor-pointer">
+              <span className="text-sm font-semibold">{t.clientName}</span>
+              <span className="text-xs text-red-600">— {t.type}</span>
+              {t.description&&<span className="text-xs text-gray-500">{t.description}</span>}
+            </div>)}
+          </div>}
+          {clients.length===0&&<div className="bg-white border border-gray-100 rounded-2xl p-8 text-center">
+            <div className="font-black text-lg mb-1">No clients yet</div>
+            <div className="text-sm text-gray-400 mb-4">Add your first client to get started.</div>
+            <button onClick={()=>setShowNew(true)} className="bg-black text-white px-6 py-2.5 rounded-xl font-bold text-sm">Add First Client</button>
+          </div>}
+        </div>}
+
+        {tab==="clients"&&<div className="space-y-3">
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search clients..." className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm"/>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {["All",...CLIENT_STATUSES].map(s=>(
+              <button key={s} onClick={()=>setFilter(s)} className={"text-xs px-3 py-1.5 rounded-full whitespace-nowrap font-semibold flex-shrink-0 "+(filter===s?"bg-black text-white":"bg-white border border-gray-200 text-gray-600")}>{s}</button>
+            ))}
+          </div>
+          {filtered.length===0?<div className="bg-white border border-gray-100 rounded-2xl p-8 text-center"><div className="font-bold mb-1">No clients found</div></div>
+          :filtered.map(c=>{
+            const tp=(c.invoices||[]).filter(i=>i.paid).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+            const td=(c.tasks||[]).filter(t=>!t.done&&t.dueDate&&t.dueDate<=today).length;
+            return <div key={c.id} onClick={()=>setSelected(c)} className="bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all cursor-pointer">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="font-black text-base">{c.businessName}</span>
+                    <span className={"text-xs font-semibold px-2 py-0.5 rounded-full "+(c.status==="Active"?"bg-green-100 text-green-700":c.status==="Prospect"?"bg-blue-100 text-blue-700":c.status==="Paused"?"bg-yellow-100 text-yellow-700":"bg-red-100 text-red-700")}>{c.status}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mb-2">{c.ownerName}{c.industry?" · "+c.industry:""}</div>
+                  <div className="flex items-center gap-3 text-xs flex-wrap">
+                    {c.monthlyFee&&<span className="text-green-600 font-semibold">${c.monthlyFee}/mo</span>}
+                    {tp>0&&<span className="text-gray-500">${tp.toLocaleString()} collected</span>}
+                    {c.services.length>0&&<span className="text-gray-400">{c.services.slice(0,2).join(", ")}{c.services.length>2?" +"+(c.services.length-2):""}</span>}
+                    {td>0&&<span className="text-red-500 font-semibold">{td} task{td>1?"s":""} due</span>}
+                  </div>
+                </div>
+                {c.websiteUrl&&<a href={c.websiteUrl} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-xs text-blue-500 flex-shrink-0">View site →</a>}
+              </div>
+            </div>;
+          })}
+        </div>}
+
+        {tab==="tasks"&&<div className="space-y-3">
+          <h2 className="font-black text-lg">All Pending Tasks</h2>
+          {clients.flatMap(c=>(c.tasks||[]).filter(t=>!t.done).map(t=>({...t,clientName:c.businessName,clientId:c.id}))).length===0
+            ?<div className="bg-white border border-gray-100 rounded-2xl p-8 text-center"><div className="font-bold mb-1">No pending tasks</div></div>
+            :clients.flatMap(c=>(c.tasks||[]).filter(t=>!t.done).map(t=>({...t,clientName:c.businessName,clientId:c.id}))).sort((a,b)=>a.dueDate>b.dueDate?1:-1).map(t=>(
+              <div key={t.id} onClick={()=>setSelected(clients.find(c=>c.id===t.clientId))} className={"bg-white border rounded-2xl p-4 cursor-pointer hover:shadow-md "+(t.dueDate&&t.dueDate<=today?"border-red-200":"border-gray-100")}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-bold text-sm">{t.clientName}</span>
+                  <span className="text-xs text-gray-400">— {t.type}</span>
+                  {t.dueDate&&t.dueDate<=today&&<span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold">Due today</span>}
+                </div>
+                {t.description&&<div className="text-xs text-gray-500">{t.description}</div>}
+                {t.dueDate&&<div className="text-xs text-gray-400 mt-1">Due: {t.dueDate}</div>}
+              </div>
+            ))
+          }
+        </div>}
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-40">
+        <div className="max-w-2xl mx-auto flex">
+          {[{id:"dashboard",label:"Home"},{id:"clients",label:"Clients"+(clients.length?" ("+clients.length+")":"")},{id:"tasks",label:"Tasks"+(stats.tasksDue>0?" ("+stats.tasksDue+")":"")}].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} className={"flex-1 py-3 text-xs font-semibold "+(tab===t.id?"text-black":"text-gray-400")}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {selected&&<ClientModal client={clients.find(c=>c.id===selected.id)||selected} onClose={()=>setSelected(null)} onSave={updated=>{save(clients.map(c=>c.id===updated.id?updated:c));setSelected(null);}}/>}
+      {showNew&&<ClientModal client={newClient()} onClose={()=>setShowNew(false)} onSave={nc=>{save([nc,...clients]);setShowNew(false);}}/>}
+    </div>
+  );
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById("root"));
+</script>
+</body>
+</html>
