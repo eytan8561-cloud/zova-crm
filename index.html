@@ -283,6 +283,109 @@ function ClientModal({ client, onClose, onSave }) {
   );
 }
 
+const COLORS = ["bg-yellow-400","bg-blue-400","bg-emerald-400","bg-purple-400","bg-pink-400","bg-orange-400","bg-red-400","bg-teal-400"];
+const DEFAULT_BUCKETS = [
+  {id:"1",label:"Maaser",pct:10,color:"bg-yellow-400"},
+  {id:"2",label:"Business",pct:10,color:"bg-blue-400"},
+  {id:"3",label:"Savings",pct:20,color:"bg-emerald-400"},
+  {id:"4",label:"Parents",pct:15,color:"bg-purple-400"},
+  {id:"5",label:"Investments",pct:15,color:"bg-pink-400"},
+  {id:"6",label:"You",pct:30,color:"bg-orange-400"},
+];
+
+function MoneyTab({ totalCollected, mrr }) {
+  const [buckets, setBuckets] = useState(() => {
+    try { const s = localStorage.getItem("zova_money_buckets"); return s ? JSON.parse(s) : DEFAULT_BUCKETS; } catch { return DEFAULT_BUCKETS; }
+  });
+  const [manualIncome, setManualIncome] = useState(() => {
+    try { return localStorage.getItem("zova_money_income") || ""; } catch { return ""; }
+  });
+  const [editing, setEditing] = useState(null);
+
+  const saveBuckets = (b) => { setBuckets(b); try { localStorage.setItem("zova_money_buckets", JSON.stringify(b)); } catch {} };
+  const saveIncome = (v) => { setManualIncome(v); try { localStorage.setItem("zova_money_income", v); } catch {} };
+
+  const totalPct = buckets.reduce((s,b)=>s+(parseFloat(b.pct)||0),0);
+  const baseAmount = parseFloat(manualIncome) || totalCollected;
+
+  const updateBucket = (id, field, val) => saveBuckets(buckets.map(b => b.id===id ? {...b,[field]:val} : b));
+  const addBucket = () => {
+    const nb = {id: Date.now()+"", label:"New Bucket", pct:0, color:COLORS[buckets.length%COLORS.length]};
+    saveBuckets([...buckets, nb]);
+  };
+  const removeBucket = (id) => saveBuckets(buckets.filter(b=>b.id!==id));
+
+  return (
+    <div className="space-y-4">
+      <div><h1 className="text-2xl font-black">Money Split</h1></div>
+
+      <div className="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+        <div className="text-xs font-semibold text-gray-500">Base Income Amount</div>
+        <div className="flex gap-2 items-center">
+          <span className="text-gray-400 text-sm">$</span>
+          <input type="number" value={manualIncome} onChange={e=>saveIncome(e.target.value)}
+            placeholder={totalCollected.toString()}
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold"/>
+        </div>
+        <div className="text-xs text-gray-400">Leave blank to use total collected from CRM (${totalCollected.toLocaleString()})</div>
+        <div className={"text-xs font-semibold mt-1 " + (Math.round(totalPct)===100 ? "text-green-600" : "text-red-500")}>
+          Total: {totalPct}% {Math.round(totalPct)===100 ? "✓ Perfect" : Math.round(totalPct)>100 ? "— over by "+(totalPct-100)+"%" : "— under by "+(100-totalPct)+"%"}
+        </div>
+      </div>
+
+      {buckets.map(b=>{
+        const amt = baseAmount * (parseFloat(b.pct)||0) / 100;
+        const isEditing = editing === b.id;
+        return <div key={b.id} className="bg-white border border-gray-100 rounded-2xl p-4">
+          {isEditing ? (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input value={b.label} onChange={e=>updateBucket(b.id,"label",e.target.value)}
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold"/>
+                <input type="number" value={b.pct} onChange={e=>updateBucket(b.id,"pct",e.target.value)}
+                  className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center font-bold"/>
+                <span className="text-gray-400 text-sm self-center">%</span>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>setEditing(null)} className="flex-1 bg-black text-white py-2 rounded-xl text-xs font-bold">Done</button>
+                <button onClick={()=>{removeBucket(b.id);setEditing(null);}} className="px-4 py-2 border border-red-200 text-red-500 rounded-xl text-xs">Delete</button>
+              </div>
+            </div>
+          ) : (
+            <div onClick={()=>setEditing(b.id)} className="cursor-pointer">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-black text-base">{b.label}</div>
+                <div className="text-right">
+                  <div className="font-black text-xl">${amt.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+                  <div className="text-xs text-gray-400">{b.pct}%</div>
+                </div>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2">
+                <div className={"h-2 rounded-full "+b.color} style={{width:Math.min(parseFloat(b.pct)||0,100)+"%"}}></div>
+              </div>
+            </div>
+          )}
+        </div>;
+      })}
+
+      <button onClick={addBucket} className="w-full border border-dashed border-gray-200 hover:bg-gray-50 py-3 rounded-2xl text-sm text-gray-500">+ Add Bucket</button>
+
+      <div className="bg-black text-white rounded-2xl p-4">
+        <div className="text-xs text-gray-400 mb-1">Monthly split at current MRR</div>
+        <div className="font-black text-2xl">${mrr.toLocaleString()}/mo</div>
+        <div className="grid grid-cols-2 gap-2 mt-3">
+          {buckets.map(b=>(
+            <div key={b.id} className="flex justify-between text-xs py-1 border-b border-gray-800">
+              <span className="text-gray-400">{b.label}</span>
+              <span className="font-semibold">${(mrr*(parseFloat(b.pct)||0)/100).toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { clients, save } = useClients();
   const [tab, setTab] = useState("dashboard");
@@ -477,46 +580,7 @@ function App() {
         )}
 
         {tab==="money" && (
-          <div className="space-y-4">
-            <div><h1 className="text-2xl font-black">Money Split</h1><p className="text-sm text-gray-400">Based on total collected: ${stats.collected.toLocaleString()}</p></div>
-            {[
-              {label:"Maaser",pct:10,color:"bg-yellow-400",desc:"Give first, always"},
-              {label:"Business",pct:10,color:"bg-blue-400",desc:"Tools, software, expenses"},
-              {label:"Savings",pct:20,color:"bg-emerald-400",desc:"Emergency fund first"},
-              {label:"Parents",pct:15,color:"bg-purple-400",desc:"Non-negotiable"},
-              {label:"Investments",pct:15,color:"bg-orange-400",desc:"Index funds, stocks"},
-              {label:"You",pct:30,color:"bg-pink-400",desc:"Spending money, life"},
-            ].map(b=>{
-              const amt = (stats.collected * b.pct / 100);
-              return <div key={b.label} className="bg-white border border-gray-100 rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <div className="font-black text-base">{b.label}</div>
-                    <div className="text-xs text-gray-400">{b.desc}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-black text-xl">${amt.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
-                    <div className="text-xs text-gray-400">{b.pct}%</div>
-                  </div>
-                </div>
-                <div className="w-full bg-gray-100 rounded-full h-2">
-                  <div className={"h-2 rounded-full "+b.color} style={{width:b.pct*3.33+"%"}}></div>
-                </div>
-              </div>;
-            })}
-            <div className="bg-black text-white rounded-2xl p-4">
-              <div className="text-xs text-gray-400 mb-1">Monthly split at current MRR</div>
-              <div className="font-black text-2xl">${stats.mrr.toLocaleString()}/mo</div>
-              <div className="grid grid-cols-2 gap-2 mt-3">
-                {[{l:"Maaser",p:10},{l:"Business",p:10},{l:"Savings",p:20},{l:"Parents",p:15},{l:"Investments",p:15},{l:"You",p:30}].map(b=>(
-                  <div key={b.l} className="flex justify-between text-xs py-1 border-b border-gray-800">
-                    <span className="text-gray-400">{b.l}</span>
-                    <span className="font-semibold">${(stats.mrr*b.p/100).toLocaleString(undefined,{maximumFractionDigits:0})}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <MoneyTab totalCollected={stats.collected} mrr={stats.mrr} />
         )}
         <div className="max-w-2xl mx-auto flex">
           {[{id:"dashboard",label:"Home"},{id:"clients",label:"Clients"+(clients.length?" ("+clients.length+")":"")},{id:"tasks",label:"Tasks"+(stats.tasksDue>0?" ("+stats.tasksDue+")":"")},{id:"money",label:"Money"}].map(t=>(
